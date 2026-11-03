@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# Persistent llama.cpp runtime manager for MOS (invoked through /mos/plugins/query).
+set -Eeuo pipefail
+SETTINGS=${MOS_LLAMA_SETTINGS:-/boot/optional/plugins/llama/settings.json}
+REPO=${MOS_LLAMA_REPO:-https://huggingface.co/buckets/ggml-org/install.sh/resolve}
+OPTIONAL_PACKAGES=${MOS_OPTIONAL_PACKAGES:-/boot/optional/packages}
+fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+root() {
+  local dir
+  dir=$(jq -er '.install_path | select(type=="string")' "$SETTINGS") || fail 'Missing install_path'
+  [[ "$dir" == /mnt/home/* && "$dir" != *'/../'* && "$dir" != *'/./'* && "$dir" != */.. && "$dir" != */. ]] || { printf 'ERROR: Invalid persistent install_path\n' >&2; return 1; }
+  printf '%s\n' "$dir"
+}
+runtime() { local r; r=$(root) || return 1; printf '%s/runtime\n' "$r"; }
+arch() {
+  case "$(uname -m)" in
+    x86_64|amd64) printf 'x86_64\n' ;;
+    aarch64|arm64) printf 'aarch64\n' ;;
+    *) fail 'Unsupported CPU architecture' ;;
+  esac
+}
+fetch() { curl -fsSL --retry 2 --max-time 180 "$1" -o "$2"; }
+fetch_zst() {
+  # pipefail is essential: an unsuccessful download must not produce a valid empty executable.
+  curl -fsSL --retry 2 --max-time 180 "$1" | zstd -dc > "$2"
+  [[ -s "$2" ]] || fail 'Downloaded executable is empty'
+}
+probe() (
+  local tmp version backend config a
+  a=$(arch)
+  mkdir -p "$(runtime)"
+  tmp=$(mktemp -d "$(runtime)/.probe.XXXXXX")
+  trap 'rm -rf "$tmp"' EXIT
+  version=${LLAMA_VERSION:-$(curl -fsSL --retry 2 --max-time 30 "$REPO/latest")}
+  [[ "$version" =~ ^b[0-9]+$ ]] || fail 'Unexpected upstream version'
+  fetch "$REPO/$version/$a/linux/featcode" "$tmp/featcode"
+  chmod 700 "$tmp/featcode"
+  backend=cpu
+  if [[ "${MOS_LLAMA_BACKEND:-auto}" != cpu ]] && command -v ldconfig >/dev/null && ldconfig -p 2>/dev/null | grep -q 'libvulkan.so.1'; then
+    if fetch_zst "$REPO/$version/$a/linux/vulkan/probe/probe.zst" "$tmp/vulkan-probe"; then
+      chmod 700 "$tmp/vulkan-probe"
+      if "$tmp/vulkan-probe" >/dev/null 2>&1; then backend=vulkan; fi
+    fi
+  fi
+  [[ "${MOS_LLAMA_BACKEND:-auto}" != vulkan || "$backend" == vulkan ]] || fail 'Vulkan backend requested but unavailable'
+  if [[ "$backend" == vulkan ]]; then config=$("$tmp/vulkan-probe" && "$tmp/featcode"); else config=$("$tmp/featcode"); fi
+  [[ "$config" =~ ^[a-zA-Z0-9_-]+$ ]] || fail 'Unexpected feature code'
+  printf '%s %s %s\n' "$version" "$backend" "$config"
+)
+install_backend() {
+  local r a ver backend config tmp bin version_output
+  r=$(runtime)
+  a=$(arch)
+  mkdir -p "$r/bin"
+  read -r ver backend config < <(probe)
+  tmp=$(mktemp -d "$r/.install.XXXXXX")
+  trap 'rm -rf "$tmp"' EXIT
+  fetch_zst "$REPO/$ver/$a/linux/$backend/$config/llama-app.zst" "$tmp/llama"
+  chmod 755 "$tmp/llama"
+  version_output=$("$tmp/llama" version) || fail 'llama version check failed'
+  [[ "$version_output" == *"build ${ver#b},"* ]] || fail 'llama version mismatch'
+  "$tmp/llama" serve --help >/dev/null 2>&1 || fail 'llama serve verification failed'
+  bin="$r/bin/llama"
+  if [[ -x "$bin" ]]; then cp -p "$bin" "$tmp/previous"; fi
+  # Atomic promotion on the same persistent filesystem.
+  mv -f "$tmp/llama" "$bin"
+  [[ ! -f "$tmp/previous" ]] || mv -f "$tmp/previous" "$r/bin/llama.previous"
+  printf '%s\n' "$ver" > "$r/bin/llama.version"
+  printf '%s\n' "$backend" > "$r/bin/llama.backend"
+  (cd "$r/bin" && sha256sum llama > llama.sha256)
+  printf 'Installed llama.cpp %s (%s) at %s\n' "$ver" "$backend" "$bin"
+}
+stage_vulkan() {
+  local stage f name n=0
+  stage="$(runtime)/vulkan-debs"
+  [[ -d "$OPTIONAL_PACKAGES" ]] || fail 'MOS optional package directory missing'
+  [[ -x /usr/bin/apt-get.orig ]] || fail 'MOS apt-get.orig missing'
+  mkdir -p "$stage/partial"
+  /usr/bin/apt-get.orig -y --download-only --no-install-recommends -o "Dir::Cache::archives=$stage" install libvulkan1 mesa-vulkan-drivers vulkan-tools
+  # MOS installs .deb files without automatic dependency resolution at boot.
+  for f in "$stage"/*.deb; do
+    [[ -f "$f" ]] || fail 'No .deb packages were downloaded'
+    dpkg-deb --field "$f" Package Version Architecture >/dev/null
+    dpkg-deb --contents "$f" >/dev/null
+  done
+  for f in "$stage"/*.deb; do
+    name=${f##*/}
+    if [[ -e "$OPTIONAL_PACKAGES/$name" ]]; then cmp -s "$f" "$OPTIONAL_PACKAGES/$name" || fail "Conflicting optional package: $name"; fi
+  done
+  for f in "$stage"/*.deb; do
+    name=${f##*/}
+    if [[ ! -e "$OPTIONAL_PACKAGES/$name" ]]; then
+      cp -p "$f" "$OPTIONAL_PACKAGES/$name.tmp"
+      mv "$OPTIONAL_PACKAGES/$name.tmp" "$OPTIONAL_PACKAGES/$name"
+    fi
+    n=$((n+1))
+  done
+  sync
+  printf 'Staged %d package files for future MOS startup. Reboot verification remains required.\n' "$n"
+}
+status() {
+  local r version='' backend='' installed=false
+  r=$(runtime) || return 1
+  [[ ! -f "$r/bin/llama.version" ]] || version=$(cat "$r/bin/llama.version")
+  [[ ! -f "$r/bin/llama.backend" ]] || backend=$(cat "$r/bin/llama.backend")
+  [[ ! -x "$r/bin/llama" ]] || installed=true
+  jq -n --arg version "$version" --arg backend "$backend" --arg binary "$r/bin/llama" --argjson installed "$installed" '{installed:$installed,version:$version,backend:$backend,binary:$binary}'
+}
+case "${1:-}" in
+  status) status ;;
+  probe) probe ;;
+  install) install_backend ;;
+  stage_vulkan) stage_vulkan ;;
+  *) fail 'Usage: llama_backend {status|probe|install|stage_vulkan}' ;;
+esac

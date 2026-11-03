@@ -1,0 +1,21 @@
+#!/bin/bash
+# MOS sources this file during lifecycle events.
+mos_start_after_services() {
+  local settings=/boot/optional/plugins/llama/settings.json
+  local install_path auto_start
+  [ -f "$settings" ] || return 0
+  install_path=$(jq -r '.install_path // empty' "$settings" 2>/dev/null)
+  auto_start=$(jq -r '.auto_start // false' "$settings" 2>/dev/null)
+  [ "$auto_start" = true ] || return 0
+  [ -n "$install_path" ] || return 0
+  [ -x "$install_path/llama-swap" ] || return 0
+  # Let the dedicated wrapper manage the PID file and configuration.
+  if [ -x /usr/bin/plugins/llama_swap ]; then
+    /usr/bin/plugins/llama_swap start
+  else
+    echo 'MOS Llama: llama_swap executable not installed' >&2
+    return 1
+  fi
+}
+# MOS versions invoking the documented name are supported as well.
+mos_start() { mos_start_after_services; }

@@ -1,0 +1,215 @@
+#!/bin/bash
+
+# Import MOS functions
+. /usr/local/lib/functions/mos-common
+
+# Set HEADER if GitHub Token was specified
+GH_TOKEN=$(jq -r '.github // empty' /boot/config/system/tokens.json 2>/dev/null)
+if [ ! -z "$GH_TOKEN" ] ; then
+  TOKEN="$(decrypt_password "$GH_TOKEN" "tokens")"
+  HEADER=(--header "Authorization: Bearer $TOKEN")
+else
+  HEADER=()
+fi
+
+# Set Variables
+PLG_DIR="/boot/optional/plugins/llama"
+PID_FILE="/var/run/mos-llama.pid"
+
+# Function to get installation path
+get_install_path() {
+  local SETTINGS_FILE="$PLG_DIR/settings.json"
+  local INSTALL_PATH=""
+
+  if [ -f "$SETTINGS_FILE" ]; then
+    INSTALL_PATH=$(jq -r '.install_path // empty' "$SETTINGS_FILE" 2>/dev/null)
+  fi
+
+  if [ -z "$INSTALL_PATH" ] || [ "$INSTALL_PATH" = "null" ]; then
+    return 1
+  fi
+
+  echo "$INSTALL_PATH"
+}
+
+# Function to get the listen port
+get_port() {
+  local SETTINGS_FILE="$PLG_DIR/settings.json"
+  local PORT=""
+
+  if [ -f "$SETTINGS_FILE" ]; then
+    PORT=$(jq -r '.port // empty' "$SETTINGS_FILE" 2>/dev/null)
+  fi
+
+  if [ -z "$PORT" ] || [ "$PORT" = "null" ] || [ "$PORT" = "0" ]; then
+    PORT="8080"
+  fi
+
+  echo "$PORT"
+}
+
+# Function to get latest version from llama-swap
+get_latest_version() {
+  local TAGS
+  local VERSION
+
+  TAGS=$(curl -s "${HEADER[@]}" "https://api.github.com/repos/mostlygeek/llama-swap/releases/latest" 2>/dev/null)
+  VERSION=$(echo "$TAGS" | jq -r '.tag_name // empty' 2>/dev/null)
+
+  if [ -z "$VERSION" ]; then
+    VERSION=$(echo "$TAGS" | jq -r '.name // empty' 2>/dev/null)
+  fi
+
+  if [ -z "$VERSION" ]; then
+    echo "v0"
+  else
+    echo "$VERSION"
+  fi
+}
+
+case "$1" in
+  check_version)
+    CURRENT_VERSION=$(jq -r '.version // empty' "$PLG_DIR/settings.json" 2>/dev/null)
+    if [ -z "$CURRENT_VERSION" ]; then
+      CURRENT_VERSION="not installed"
+    fi
+
+    LATEST_VERSION=$(get_latest_version)
+
+    if [ "$CURRENT_VERSION" = "not installed" ] || [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
+      echo "{\"current\":\"$CURRENT_VERSION\",\"latest\":\"$LATEST_VERSION\",\"update_available\":true}"
+    else
+      echo "{\"current\":\"$CURRENT_VERSION\",\"latest\":\"$LATEST_VERSION\",\"update_available\":false}"
+    fi
+  ;;
+
+  install_binary)
+    INSTALL_PATH=$(get_install_path)
+    if [ -z "$INSTALL_PATH" ]; then
+      echo "Error: Cannot determine install path"
+      exit 1
+    fi
+
+    mkdir -p "$INSTALL_PATH"
+
+    ARCHITECTURE=$(get_arch)
+
+    VERSION=$(get_latest_version)
+    URL="https://github.com/mostlygeek/llama-swap/releases/download/${VERSION}/llama-swap_${VERSION#v}_linux_${ARCHITECTURE}.tar.gz"
+    TAR_FILE="$INSTALL_PATH/llama-swap.tar.gz"
+
+    echo "Downloading llama-swap"
+    echo "Architecture: $ARCHITECTURE"
+
+    if wget -q "$URL" -O "$TAR_FILE"; then
+      if [ -f "$TAR_FILE" ] && [ -s "$TAR_FILE" ]; then
+        echo "Extracting..."
+        tar -xzf "$TAR_FILE" -C "$INSTALL_PATH"
+        chmod +x "$INSTALL_PATH/llama-swap"
+        rm -f "$TAR_FILE"
+
+        jq ".version = \"$VERSION\"" "$PLG_DIR/settings.json" > "$PLG_DIR/settings.json.tmp"
+        mv "$PLG_DIR/settings.json.tmp" "$PLG_DIR/settings.json"
+
+        echo "Installed $VERSION to $INSTALL_PATH"
+      else
+        rm -f "$TAR_FILE"
+        echo "Downloaded file is empty"
+        exit 1
+      fi
+    else
+      rm -f "$TAR_FILE"
+      echo "Failed to download"
+      exit 1
+    fi
+  ;;
+
+  start)
+    INSTALL_PATH=$(get_install_path)
+    if [ -z "$INSTALL_PATH" ]; then
+      echo "Error: Cannot determine install path"
+      exit 1
+    fi
+
+    if [ -f "$PID_FILE" ]; then
+      OLDPID=$(cat "$PID_FILE" 2>/dev/null)
+      if [ -n "$OLDPID" ] && kill -0 "$OLDPID" 2>/dev/null; then
+        echo "Already running (PID: $OLDPID)"
+        exit 0
+      fi
+      rm -f "$PID_FILE"
+    fi
+
+    PORT=$(get_port)
+
+    cd "$INSTALL_PATH"
+    nohup ./llama-swap -config "$INSTALL_PATH/llama-swap.config" -listen ":${PORT}" > /dev/null 2>&1 &
+    NEWPID=$!
+    echo $NEWPID > "$PID_FILE"
+    sleep 0.5
+    if kill -0 $NEWPID 2>/dev/null; then
+      echo "Started (PID: $NEWPID)"
+    else
+      rm -f "$PID_FILE"
+      echo "Failed to start"
+      exit 1
+    fi
+  ;;
+
+  stop)
+    if [ -f "$PID_FILE" ]; then
+      PID=$(cat "$PID_FILE" 2>/dev/null)
+      if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+        kill "$PID" 2>/dev/null
+        sleep 1
+        kill -9 "$PID" 2>/dev/null
+      fi
+      rm -f "$PID_FILE"
+      echo "Stopped"
+    else
+      echo "Not running"
+    fi
+  ;;
+
+  restart)
+    if [ -f "$PID_FILE" ]; then
+      PID=$(cat "$PID_FILE" 2>/dev/null)
+      if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+        kill "$PID" 2>/dev/null
+        sleep 1
+        kill -9 "$PID" 2>/dev/null
+      fi
+      rm -f "$PID_FILE"
+    fi
+
+    INSTALL_PATH=$(get_install_path)
+    if [ -n "$INSTALL_PATH" ] && [ -f "$INSTALL_PATH/llama-swap" ]; then
+      PORT=$(get_port)
+      cd "$INSTALL_PATH"
+      nohup ./llama-swap -config "$INSTALL_PATH/llama-swap.config" -listen ":${PORT}" > /dev/null 2>&1 &
+      NEWPID=$!
+      echo $NEWPID > "$PID_FILE"
+      sleep 0.5
+      if kill -0 $NEWPID 2>/dev/null; then
+        echo "Restarted (PID: $NEWPID)"
+      else
+        rm -f "$PID_FILE"
+        echo "Failed to restart"
+        exit 1
+      fi
+    fi
+  ;;
+
+  status)
+    RUNNING="false"
+
+    if [ -f "$PID_FILE" ]; then
+      PID=$(cat "$PID_FILE" 2>/dev/null)
+      if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+        RUNNING="true"
+      fi
+    fi
+
+    echo "{\"running\":$RUNNING}"
+  ;;
+esac

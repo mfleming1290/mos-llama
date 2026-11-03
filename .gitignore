@@ -321,3 +321,6 @@ compose.override.yml
 # Local project overrides
 # -----------------------------------------------------------------------------
 .gitignore.local
+
+# Local MOS plugin packaging
+/artifacts/

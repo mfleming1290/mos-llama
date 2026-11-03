@@ -1,0 +1,119 @@
+name: Build Plugin
+
+on:
+  push:
+    tags:
+      - '[0-9]*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '0.0.1'
+        required: true
+        default: '0.0.1'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Download llama-swap icon
+        run: wget -O icon.png "https://raw.githubusercontent.com/ich777/mos-templates/master/images/llama-swap.png" || echo '{}' > icon.png
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build Vue plugin
+        working-directory: page
+        env:
+          PLUGIN_VERSION: ${{ steps.version.outputs.VERSION }}
+        run: npm ci --ignore-scripts --no-audit --no-fund && npm run build
+
+      - name: Create package structure
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          PKG_NAME="llama-${VERSION}-1+mos-plugin"
+          PKG_DIR="${PKG_NAME}_all"
+
+          mkdir -p ${PKG_DIR}/var/www/mos-plugins/llama
+          mkdir -p ${PKG_DIR}/usr/bin/plugins
+          mkdir -p ${PKG_DIR}/DEBIAN
+
+          # Copy over main script and make it executable
+          cp llama_swap ${PKG_DIR}/usr/bin/plugins/llama_swap
+          cp llama_backend ${PKG_DIR}/usr/bin/plugins/llama_backend
+          # Legacy donor command retained; plugin identity is now llama.
+          chmod +x ${PKG_DIR}/usr/bin/plugins/llama_swap ${PKG_DIR}/usr/bin/plugins/llama_backend
+
+          # Copy built page (from page/dist/* not page/dist/llama/*)
+          cp -R page/dist/llama/* ${PKG_DIR}/var/www/mos-plugins/llama/
+
+          # Copy icon
+          if [ -f icon.png ]; then
+            cp icon.png ${PKG_DIR}/var/www/mos-plugins/llama/
+          fi
+
+          cat > ${PKG_DIR}/DEBIAN/control << EOF
+          Package: mos-llama-plugin
+          Version: ${VERSION}-1+mos-plugin
+          Architecture: all
+          Maintainer: admin@mos-official.net
+          Description: MOS Llama runtime plugin with llama-swap and llama.cpp management
+          EOF
+
+          cat > ${PKG_DIR}/DEBIAN/postinst << 'EOF'
+          #!/bin/bash
+          exit 0
+          EOF
+          chmod +x ${PKG_DIR}/DEBIAN/postinst
+
+          cat > ${PKG_DIR}/DEBIAN/postrm << 'EOF'
+          #!/bin/bash
+          exit 0
+          EOF
+          chmod +x ${PKG_DIR}/DEBIAN/postrm
+
+      - name: Check required MOS plugin assets
+        run: |
+          bash -n llama_backend llama_swap functions
+          test -f page/dist/llama/manifest.json
+          test -x llama_backend
+
+      - name: Build .deb package
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          PKG_NAME="llama-${VERSION}-1+mos-plugin"
+          PKG_DIR="${PKG_NAME}_all"
+          DEB_FILE="${PKG_NAME}_all.deb"
+
+          dpkg-deb --build ${PKG_DIR}
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: MOS Llama Plugin ${{ steps.version.outputs.VERSION }}
+          body: |
+            MOS Llama Plugin ${{ steps.version.outputs.VERSION }}
+
+          files: |
+            llama-${{ steps.version.outputs.VERSION }}-1+mos-plugin_all.deb
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
