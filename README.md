@@ -26,6 +26,10 @@ Local frontend and .deb package build successfully, but hardware-backed runtime 
 
 ## Coexistence with the original MOS llama-swap plugin
 
-Version 0.0.3 changes the MOS control command to `llama_router` rather than `llama_swap`, avoiding the Debian file ownership collision with `mos-llama-swap-plugin` 0.5.1. The two plugins have separate MOS settings (`llama` versus `llama-swap`), separate PID files, and default to different HTTP ports (`8081` versus `8080`). The upstream executable is still called `llama-swap` but resides in this plugin's own persistent installation directory.
+Version 0.0.3 and later change the MOS control command to `llama_router` rather than `llama_swap`, avoiding the Debian file ownership collision with `mos-llama-swap-plugin` 0.5.1. The two plugins have separate MOS settings (`llama` versus `llama-swap`), separate PID files, and default to different HTTP ports (`8081` versus `8080`). The upstream executable is still called `llama-swap` but resides in this plugin's own persistent installation directory.
 
 Install MOS Llama **alongside** the existing plugin for testing; do not uninstall the existing plugin or point both plugins at the same install directory. Test model loading and persistence before migrating.
+
+## 0.0.4 installation result fix
+
+The 0.0.3 backend installer could complete successfully but exit with `tmp: unbound variable` because an `EXIT` trap referred to a function-local variable after the function returned. The installer now uses a subshell-scoped trap; the actual Apps host already has a working b12019 Vulkan binary and status reports it correctly. This release does not require reinstalling the binary.

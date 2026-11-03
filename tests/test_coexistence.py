@@ -25,6 +25,6 @@ assert settings['port'] == '8081'
 assert "DEFAULT_PORT = '8081'" in vue
 assert 'PORT="8081"' in router
 assert "name: 'llama'" in (root / 'page/plugin.config.js').read_text()
-assert "version: '0.0.3'" in (root / 'page/plugin.config.js').read_text()
+assert "version: '0.0.4'" in (root / 'page/plugin.config.js').read_text()
 assert '/plugins/llama/main.js' in (root / 'page/index.html').read_text()
 print('MOS Llama coexistence source checks passed')

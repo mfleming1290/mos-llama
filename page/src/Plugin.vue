@@ -280,11 +280,14 @@ const backendAction = async (action) => {
       Object.assign(backendStatus, result);
     } else {
       backendMessage.value = typeof data.output === 'string' ? data.output : JSON.stringify(data.output);
-      refreshBackendStatus().catch(() => {});
     }
   } catch (e) {
     backendMessage.value = String(e.message || e);
   } finally {
+    if (action !== 'status') {
+      // Even a failed command may have installed the binary before its exit handler failed.
+      try { await refreshBackendStatus(); } catch (_) { /* Preserve the original result. */ }
+    }
     backendBusy.value = false;
   }
 };

@@ -52,6 +52,7 @@ jobs:
           set -euo pipefail
           bash -n llama_backend llama_router functions scripts/package-local.sh
           python3 tests/test_backend.py
+          python3 tests/test_install_cleanup.py
           python3 tests/test_coexistence.py
           npm --prefix page run build
       - name: Build and inspect package
