@@ -57,8 +57,9 @@ jobs:
         run: |
           set -euo pipefail
           scripts/package-local.sh "${{ steps.identity.outputs.version }}"
-          dpkg-deb -c artifacts/*.deb | grep -q /usr/bin/plugins/llama_backend
-          dpkg-deb -c artifacts/*.deb | grep -q /var/www/mos-plugins/llama/manifest.json
+          dpkg-deb -c artifacts/*.deb > "$RUNNER_TEMP/package-contents.txt"
+          grep -Fq /usr/bin/plugins/llama_backend "$RUNNER_TEMP/package-contents.txt"
+          grep -Fq /var/www/mos-plugins/llama/manifest.json "$RUNNER_TEMP/package-contents.txt"
           sha256sum artifacts/*.deb > artifacts/llama-${{ steps.identity.outputs.version }}-1+mos-plugin_all.deb.sha256
           md5sum artifacts/*.deb > artifacts/llama-${{ steps.identity.outputs.version }}-1+mos-plugin_all.deb.md5
           git archive --format=zip --output="artifacts/mos-llama-${{ steps.identity.outputs.version }}-source.zip" HEAD
