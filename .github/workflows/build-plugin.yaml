@@ -94,10 +94,8 @@ jobs:
           set -euo pipefail
           test -f "artifacts/llama-${TAG}-1+mos-plugin_all.deb"
           test -f "artifacts/mos-llama-${TAG}-source.zip"
-          cd artifacts
-          sha256sum -c "llama-${TAG}-1+mos-plugin_all.deb.sha256"
-          md5sum -c "llama-${TAG}-1+mos-plugin_all.deb.md5"
-          cd ..
+          sha256sum -c "artifacts/llama-${TAG}-1+mos-plugin_all.deb.sha256"
+          md5sum -c "artifacts/llama-${TAG}-1+mos-plugin_all.deb.md5"
           ! gh release view "$TAG" >/dev/null 2>&1
           gh release create "$TAG" artifacts/* --verify-tag --draft --title "MOS Llama $TAG" --notes 'Initial MOS Llama integration preview. Hardware installation and reboot recovery are not yet qualified; install only in a controlled test environment.'
           gh release edit "$TAG" --draft=false --latest
