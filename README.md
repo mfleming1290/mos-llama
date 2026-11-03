@@ -20,4 +20,6 @@ cd page && npm ci && npm run build
 
 ## Status
 
-Local frontend and .deb package build successfully, but hardware-backed runtime and reboot persistence have not been qualified. MOS plugin lifecycle hooks are retained in tagged source; packaged binaries live under /usr/bin/plugins. Not pushed or published.
+First release is an experimental integration preview, not yet hardware/reboot-qualified. Avoid installing over the existing llama-swap plugin on Apps until migration has been tested.
+
+Local frontend and .deb package build successfully, but hardware-backed runtime and reboot persistence have not been qualified. MOS plugin lifecycle hooks are retained in tagged source; packaged binaries live under /usr/bin/plugins. Initial source checkpoint is pushed; the first tagged release is prepared for controlled testing.

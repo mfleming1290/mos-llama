@@ -1,119 +1,102 @@
-name: Build Plugin
-
+name: Build and release MOS Llama
 on:
   push:
-    tags:
-      - '[0-9]*'
+    branches: [main]
+    tags: ['[0-9]*']
+  pull_request:
   workflow_dispatch:
     inputs:
       version:
-        description: '0.0.1'
+        description: 'Existing numeric tag to publish'
         required: true
-        default: '0.0.1'
-
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: mos-llama-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   build:
-    runs-on: ubuntu-latest
-
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set version
-        id: version
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.version && format('refs/tags/{0}', github.event.inputs.version) || github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Validate source and release identity
+        id: identity
+        shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
+          set -euo pipefail
+          python3 scripts/check-release.py
+          VERSION=$(node --input-type=module -e 'import c from "./page/plugin.config.js"; console.log(c.version)')
+          if [[ "${{ github.event_name }}" == workflow_dispatch || "${{ github.ref_type }}" == tag ]]; then
+            TAG="${{ github.event.inputs.version || github.ref_name }}"
+            [[ "$TAG" == "$VERSION" ]] || { echo 'Tag/version mismatch'; exit 1; }
+            [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+            test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 "$TAG")"
           fi
-          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-          echo "Building version: $VERSION"
-
-      - name: Download llama-swap icon
-        run: wget -O icon.png "https://raw.githubusercontent.com/ich777/mos-templates/master/images/llama-swap.png" || echo '{}' > icon.png
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
         with:
           node-version: '22'
-
-      - name: Build Vue plugin
+      - name: Install locked dependencies
         working-directory: page
-        env:
-          PLUGIN_VERSION: ${{ steps.version.outputs.VERSION }}
-        run: npm ci --ignore-scripts --no-audit --no-fund && npm run build
-
-      - name: Create package structure
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Validate scripts and frontend
         run: |
-          VERSION=${{ steps.version.outputs.VERSION }}
-          PKG_NAME="llama-${VERSION}-1+mos-plugin"
-          PKG_DIR="${PKG_NAME}_all"
-
-          mkdir -p ${PKG_DIR}/var/www/mos-plugins/llama
-          mkdir -p ${PKG_DIR}/usr/bin/plugins
-          mkdir -p ${PKG_DIR}/DEBIAN
-
-          # Copy over main script and make it executable
-          cp llama_swap ${PKG_DIR}/usr/bin/plugins/llama_swap
-          cp llama_backend ${PKG_DIR}/usr/bin/plugins/llama_backend
-          # Legacy donor command retained; plugin identity is now llama.
-          chmod +x ${PKG_DIR}/usr/bin/plugins/llama_swap ${PKG_DIR}/usr/bin/plugins/llama_backend
-
-          # Copy built page (from page/dist/* not page/dist/llama/*)
-          cp -R page/dist/llama/* ${PKG_DIR}/var/www/mos-plugins/llama/
-
-          # Copy icon
-          if [ -f icon.png ]; then
-            cp icon.png ${PKG_DIR}/var/www/mos-plugins/llama/
-          fi
-
-          cat > ${PKG_DIR}/DEBIAN/control << EOF
-          Package: mos-llama-plugin
-          Version: ${VERSION}-1+mos-plugin
-          Architecture: all
-          Maintainer: admin@mos-official.net
-          Description: MOS Llama runtime plugin with llama-swap and llama.cpp management
-          EOF
-
-          cat > ${PKG_DIR}/DEBIAN/postinst << 'EOF'
-          #!/bin/bash
-          exit 0
-          EOF
-          chmod +x ${PKG_DIR}/DEBIAN/postinst
-
-          cat > ${PKG_DIR}/DEBIAN/postrm << 'EOF'
-          #!/bin/bash
-          exit 0
-          EOF
-          chmod +x ${PKG_DIR}/DEBIAN/postrm
-
-      - name: Check required MOS plugin assets
+          set -euo pipefail
+          bash -n llama_backend llama_swap functions scripts/package-local.sh
+          python3 tests/test_backend.py
+          npm --prefix page run build
+      - name: Build and inspect package
         run: |
-          bash -n llama_backend llama_swap functions
-          test -f page/dist/llama/manifest.json
-          test -x llama_backend
-
-      - name: Build .deb package
-        run: |
-          VERSION=${{ steps.version.outputs.VERSION }}
-          PKG_NAME="llama-${VERSION}-1+mos-plugin"
-          PKG_DIR="${PKG_NAME}_all"
-          DEB_FILE="${PKG_NAME}_all.deb"
-
-          dpkg-deb --build ${PKG_DIR}
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
+          set -euo pipefail
+          scripts/package-local.sh "${{ steps.identity.outputs.version }}"
+          dpkg-deb -c artifacts/*.deb | grep -q /usr/bin/plugins/llama_backend
+          dpkg-deb -c artifacts/*.deb | grep -q /var/www/mos-plugins/llama/manifest.json
+          sha256sum artifacts/*.deb > artifacts/llama-${{ steps.identity.outputs.version }}-1+mos-plugin_all.deb.sha256
+          md5sum artifacts/*.deb > artifacts/llama-${{ steps.identity.outputs.version }}-1+mos-plugin_all.deb.md5
+          git archive --format=zip --output="artifacts/mos-llama-${{ steps.identity.outputs.version }}-source.zip" HEAD
+          test "$(stat -c%s artifacts/mos-llama-${{ steps.identity.outputs.version }}-source.zip)" -lt 10485760
+      - uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ steps.version.outputs.VERSION }}
-          name: MOS Llama Plugin ${{ steps.version.outputs.VERSION }}
-          body: |
-            MOS Llama Plugin ${{ steps.version.outputs.VERSION }}
-
-          files: |
-            llama-${{ steps.version.outputs.VERSION }}-1+mos-plugin_all.deb
-          draft: false
-          prerelease: false
+          name: mos-llama-${{ steps.identity.outputs.version }}
+          path: artifacts/*.deb*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mos-llama-source-${{ steps.identity.outputs.version }}
+          path: artifacts/*-source.zip
+          if-no-files-found: error
+  release:
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mos-llama-*
+          merge-multiple: true
+          path: artifacts
+      - name: Publish verified assets
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          test -f "artifacts/llama-${TAG}-1+mos-plugin_all.deb"
+          test -f "artifacts/mos-llama-${TAG}-source.zip"
+          cd artifacts
+          sha256sum -c "llama-${TAG}-1+mos-plugin_all.deb.sha256"
+          md5sum -c "llama-${TAG}-1+mos-plugin_all.deb.md5"
+          cd ..
+          ! gh release view "$TAG" >/dev/null 2>&1
+          gh release create "$TAG" artifacts/* --verify-tag --draft --title "MOS Llama $TAG" --notes 'Initial MOS Llama integration preview. Hardware installation and reboot recovery are not yet qualified; install only in a controlled test environment.'
+          gh release edit "$TAG" --draft=false --latest
