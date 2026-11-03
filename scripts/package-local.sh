@@ -9,11 +9,11 @@ DEST="artifacts/$PKG_NAME"
 mkdir -p artifacts
 [[ ! -e "$DEST" ]] || { echo "Already exists: $DEST" >&2; exit 1; }
 trap '[[ ! -d "$DEST" ]] || rm -rf "$DEST"' ERR
-bash -n llama_swap llama_backend functions
+bash -n llama_router llama_backend functions
 npm --prefix page ci --ignore-scripts --no-audit --no-fund
 PLUGIN_VERSION="$VERSION" npm --prefix page run build
 mkdir -p "$DEST/usr/bin/plugins" "$DEST/var/www/mos-plugins/llama" "$DEST/DEBIAN"
-install -m 755 llama_swap "$DEST/usr/bin/plugins/llama_swap"
+install -m 755 llama_router "$DEST/usr/bin/plugins/llama_router"
 install -m 755 llama_backend "$DEST/usr/bin/plugins/llama_backend"
 cp -a page/dist/llama/. "$DEST/var/www/mos-plugins/llama/"
 # MOS consumes plugin hooks and settings from the tagged plugin source; retain them separately.

@@ -76,3 +76,42 @@ Task type: Installer correctness, MOS lifecycle, local package build
 
 ### Outcome
 - Local .deb builds, Bash syntax passes, tests for path-validation behavior pass. No live MOS installation or reboot validation; follow-up necessary.
+
+## 2026-11-02 — Debian package coexistence repair
+
+Client: ChatGPT
+Model: GPT-6
+Project: mos-llama
+Languages: Vue, JavaScript, Bash, GitHub Actions
+Task type: Packaging collision and safe side-by-side deployment
+
+### Serena tools used
+- `serena_activate_project`: verified correct active repository and available Vue/TypeScript/Bash language servers.
+- `serena_get_symbols_overview`: confirmed Vue component is a template and script setup; naming collision was package-path/string-oriented, not a semantic symbol rename.
+
+### GoMCP tools used
+- `run`: inspected all executable names and packaging references, performed scoped renaming and validation, built the .deb, and checked its payload.
+
+### Serena strengths observed
+- Correct project activation before edits avoided cross-repository confusion.
+
+### GoMCP strengths observed
+- Path-based collision was more accurately resolved by text-oriented package inspection and explicit tests than by a semantic symbol rename.
+
+### Serena weaknesses/friction
+- Vue symbol overview was too coarse for command string references inside the template and setup script.
+
+### GoMCP weaknesses/friction
+- Initial broad text replacement also changed Vue translation keys; caught by focused inspection and corrected before building.
+
+### Context efficiency
+- Focused ripgrep across the wrapper, Vue, hooks, workflow, and packaging avoided unrelated source reads.
+
+### Tool-selection ergonomics
+- GoMCP was appropriate for executable file paths, package payloads, and release metadata; Serena provided project orientation.
+
+### Candidate GoMCP improvement
+- None justified from this checkpoint.
+
+### Outcome
+- New `llama_router` wrapper, separate port 8081, version 0.0.3, and coexistence regression tests; local .deb build and checks passed. MOS runtime install still unverified.

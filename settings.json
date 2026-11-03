@@ -1,6 +1,6 @@
 {
   "install_path": "/mnt/home/appdata/llama",
   "auto_start": false,
-  "port": "8080",
+  "port": "8081",
   "version": ""
 }

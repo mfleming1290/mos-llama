@@ -10,10 +10,10 @@ mos_start_after_services() {
   [ -n "$install_path" ] || return 0
   [ -x "$install_path/llama-swap" ] || return 0
   # Let the dedicated wrapper manage the PID file and configuration.
-  if [ -x /usr/bin/plugins/llama_swap ]; then
-    /usr/bin/plugins/llama_swap start
+  if [ -x /usr/bin/plugins/llama_router ]; then
+    /usr/bin/plugins/llama_router start
   else
-    echo 'MOS Llama: llama_swap executable not installed' >&2
+    echo 'MOS Llama: llama_router executable not installed' >&2
     return 1
   fi
 }

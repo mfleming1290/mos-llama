@@ -84,7 +84,7 @@
             <v-text-field
               v-model="settings.port"
               :label="$t('plugin_llama_swap.port')"
-              :hint="$t('plugin_llama_swap.default_port_hint', { port: 8080 })"
+              :hint="$t('plugin_llama_swap.default_port_hint', { port: 8081 })"
               persistent-hint
               :rules="portRules"
               type="number"
@@ -317,11 +317,11 @@ const configContent = ref('');
 const settings = reactive({
   install_path: '',
   auto_start: false,
-  port: '8080',
+  port: '8081',
   version: ''
 });
 
-const DEFAULT_PORT = '8080';
+const DEFAULT_PORT = '8081';
 
 const portRules = [
   (v) => {
@@ -354,7 +354,7 @@ const getInstallPath = async () => {
       if (res.ok) {
         const data = await res.json();
         if (data.appdata) {
-          path = data.appdata + '/llama-swap';
+          path = data.appdata + '/llama';
         }
       }
     } catch (e) {
@@ -400,7 +400,7 @@ const doInstall = async () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        command: 'llama_swap',
+        command: 'llama_router',
         args: ['install_binary'],
         timeout: 120,
         parse_json: false,
@@ -433,7 +433,7 @@ const doUpdate = async () => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          command: 'llama_swap',
+          command: 'llama_router',
           args: ['stop'],
           timeout: 30,
           parse_json: false,
@@ -448,7 +448,7 @@ const doUpdate = async () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        command: 'llama_swap',
+        command: 'llama_router',
         args: ['install_binary'],
         timeout: 120,
         parse_json: false,
@@ -467,7 +467,7 @@ const doUpdate = async () => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          command: 'llama_swap',
+          command: 'llama_router',
           args: ['start'],
           timeout: 30,
           parse_json: false,
@@ -635,7 +635,7 @@ const checkStatus = async () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        command: 'llama_swap',
+        command: 'llama_router',
         args: ['status'],
         timeout: 5,
         parse_json: true,
@@ -662,7 +662,7 @@ const checkForUpdates = async () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        command: 'llama_swap',
+        command: 'llama_router',
         args: ['check_version'],
         timeout: 15,
         parse_json: true,
@@ -692,7 +692,7 @@ const startDaemon = async () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        command: 'llama_swap',
+        command: 'llama_router',
         args: ['start'],
         timeout: 30,
         parse_json: false,
@@ -716,7 +716,7 @@ const stopDaemon = async () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        command: 'llama_swap',
+        command: 'llama_router',
         args: ['stop'],
         timeout: 30,
         parse_json: false,
@@ -786,7 +786,7 @@ const saveConfig = async () => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          command: 'llama_swap',
+          command: 'llama_router',
           args: ['stop'],
           timeout: 30,
           parse_json: false,
@@ -832,7 +832,7 @@ const saveConfig = async () => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          command: 'llama_swap',
+          command: 'llama_router',
           args: ['start'],
           timeout: 30,
           parse_json: false,
